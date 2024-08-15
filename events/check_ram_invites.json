@@ -1,0 +1,4 @@
+{
+    "ddb_table_name": "lf_ram_invite_monitor",
+    "ram_timeout_in_seconds": "3600"
+}

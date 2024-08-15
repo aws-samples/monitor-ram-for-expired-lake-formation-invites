@@ -1,0 +1,256 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: >
+  AWS SAM Template to deploy a Lambda function that revokes Lake Formation permissions when an IAM role or user is deleted.
+
+Parameters:
+  LambdaArchitecture:
+    Type: String
+    Default: arm64
+    AllowedValues:
+      - "arm64"
+      - "amd64"
+    Description: "Lambda architecture (x86_64 or arm64)"
+
+  LambdaMemorySize:
+    Type: Number
+    Default: 128
+    MinValue: 128
+    MaxValue: 3008
+    ConstraintDescription: "Must be between 128 and 3008"
+
+  LambdaTimeout:
+    Type: Number
+    Default: 300
+    MinValue: 1
+    MaxValue: 900
+    ConstraintDescription: "Must be between 1 and 900"
+
+  LambdaReservedConcurrentExecutions:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 50
+    ConstraintDescription: "Must be between 0 and 50"
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: "The ID of the VPC"
+
+  SubnetId1:
+    Type: AWS::EC2::Subnet::Id
+    Description: "The ID of the first subnet (required)"
+    AllowedPattern: "(^$|^subnet-[a-f0-9]+$)"
+    ConstraintDescription: "Must be a valid Subnet ID or leave empty."
+
+  SubnetId2:
+    Type: AWS::EC2::Subnet::Id
+    Description: "The ID of the second subnet (optional)"
+    Default: ""
+    AllowedPattern: "(^$|^subnet-[a-f0-9]+$)"
+    ConstraintDescription: "Must be a valid Subnet ID or leave empty."
+
+  SubnetId3:
+    Type: AWS::EC2::Subnet::Id
+    Description: "The ID of the third subnet (optional)"
+    Default: ""
+    AllowedPattern: "(^$|^subnet-[a-f0-9]+$)"
+    ConstraintDescription: "Must be a valid Subnet ID or leave empty."
+
+  DynamoDbTableName:
+    Type: String
+    Default: "lf_stale_ram_invite_monitor"
+    Description: The DynamoDB that state information will be stored in, in the event of RAM issues.
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z0-9_.-]+$"
+    ConstraintDescription: "Must be a valid DynamoDB table name."
+
+  RAMInvitationTimeoutInSeconds:
+    Type: Number
+    Description: The age of an invitation to wait till until it is recreated.
+    Default: 39600
+    MinValue: 21600
+    MaxValue: 43200
+    ConstraintDescription: "Must be between 21600 and 43200"
+
+  DryRun:
+    Type: String
+    Description: When set to false, the Lambda will call RAM to associate/deassociate principals from invitations. 
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+
+Mappings:
+  # Workaround because keys in mappings can not contain "_", so the real architecture for Lambda for x86_64 can't be used for selecting layers
+  # in the following mappings. Parameter in the template are amd64 and amd64, but they are translated to their real values using this mapping.
+  ArchitectureMappings:
+    arm64:
+      RealValue: arm64
+    amd64:
+      RealValue: x86_64
+  # https://docs.powertools.aws.dev/lambda/python/latest/
+  PowerToolsLambdaLayers:
+    eu-west-1:
+      arm64: "arn:aws:lambda:eu-west-1:017000801446:layer:AWSLambdaPowertoolsPythonV2-Arm64:42"
+      amd64: "arn:aws:lambda:eu-west-1:017000801446:layer:AWSLambdaPowertoolsPythonV2:42"
+    us-east-1:
+      arm64: "arn:aws:lambda:us-east-1:017000801446:layer:AWSLambdaPowertoolsPythonV2-Arm64:42"
+      amd64: "arn:aws:lambda:us-east-1:017000801446:layer:AWSLambdaPowertoolsPythonV2:42"
+    eu-south-2:
+      arm64: "arn:aws:lambda:eu-south-2:017000801446:layer:AWSLambdaPowertoolsPythonV2-Arm64:52"
+      amd64: "arn:aws:lambda:eu-south-2:017000801446:layer:AWSLambdaPowertoolsPythonV2:52"
+  # https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Lambda-Insights-extension-versionsx86-64.html
+  # https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Lambda-Insights-extension-versionsARM.html
+  InsightsExtensionLambdaLayers:
+    eu-west-1:
+      arm64: "arn:aws:lambda:eu-west-1:580247275435:layer:LambdaInsightsExtension-Arm64:5"
+      amd64: "arn:aws:lambda:eu-west-1:580247275435:layer:LambdaInsightsExtension:38"
+    us-east-1:
+      arm64: "arn:aws:lambda:us-east-1:580247275435:layer:LambdaInsightsExtension-Arm64:5"
+      amd64: "arn:aws:lambda:us-east-1:580247275435:layer:LambdaInsightsExtension:38"
+    eu-south-2:
+      arm64: "arn:aws:lambda:eu-south-2:580247275435:layer:LambdaInsightsExtension-Arm64:2"
+      amd64: "arn:aws:lambda:eu-south-2:580247275435:layer:LambdaInsightsExtension:2"
+
+Resources:
+  DynanoDbTable:
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_28
+            comment: "DB does not require backup"
+          - id: CKV_AWS_119
+            comment: "DynamoDB table does not require encryption as it will be encrypted using service key."
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: !Ref DynamoDbTableName
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  LambdaExecutionRole:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: IAM role should not allow * resource on its permissions policy
+      checkov:
+        skip:
+          - id: CKV_AWS_111
+            comment: Ensure IAM policies does not allow write access without constraints
+          - id: CKV_AWS_107
+            comment: Ensure IAM policies does not allow credentials exposure
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: 'LambdaExecutionPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'dynamodb:Scan'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:DeleteItem'
+                Resource:
+                  - !GetAtt DynanoDbTable.Arn
+                Sid: "DDBPermissions"
+              - Effect: 'Allow'
+                Action:
+                  - 'ram:GetResourceShareAssociations'
+                  - 'ram:AssociateResourceShare'
+                  - 'ram:DisassociateResourceShare'
+                Resource: !Sub "arn:aws:ram:${AWS::Region}:${AWS::AccountId}:resource-share/*"
+                Sid: 'RAMPermissions'
+
+  LambdaSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security group for Lambda function with no inbound and all outbound traffic allowed'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+
+  MonitorForExpiredRAMInvitesFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W89
+            reason: Lambda functions should be deployed inside a VPC
+      checkov:
+        skip:
+          - id: CKV_AWS_116
+            comment: "Scheduled lambda does not require dead letter queue."
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Runtime: 'python3.11'
+      Architectures:
+        - !FindInMap [ArchitectureMappings, !Ref LambdaArchitecture, "RealValue"]
+      CodeUri: src/
+      Handler: lf_stale_ram_invite_monitor.lambda_handler.lambda_handler
+      MemorySize: !Ref LambdaMemorySize
+      Timeout: !Ref LambdaTimeout
+      ReservedConcurrentExecutions: !Ref LambdaReservedConcurrentExecutions
+      Role: !GetAtt LambdaExecutionRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - !GetAtt LambdaSecurityGroup.GroupId
+        SubnetIds:
+          - !Ref SubnetId1
+          - !If
+            - HasSubnetId2
+            - !Ref SubnetId2
+            - !Ref "AWS::NoValue"
+          - !If
+            - HasSubnetId3
+            - !Ref SubnetId3
+            - !Ref "AWS::NoValue"
+      Tracing: Active
+      Layers:
+        - !FindInMap [PowerToolsLambdaLayers, !Ref "AWS::Region", !Ref LambdaArchitecture]
+        - !FindInMap [InsightsExtensionLambdaLayers, !Ref "AWS::Region", !Ref LambdaArchitecture]
+
+  ScheduleEventRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      ScheduleExpression: 'rate(15 minutes)'
+      Targets:
+        - Arn: !GetAtt MonitorForExpiredRAMInvitesFunction.Arn
+          Id: "MonitorForExpiredRAMInvitesFunctionTarget"
+          Input: !Sub '{ "ddb_table_name": "${DynamoDbTableName}", "ram_timeout_in_seconds": ${RAMInvitationTimeoutInSeconds}, "dry_run" : "${DryRun}" }'
+
+  LambdaInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt MonitorForExpiredRAMInvitesFunction.Arn
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt ScheduleEventRule.Arn
+
+Conditions:
+  HasSubnetId2: !Not [!Equals [!Ref SubnetId2, ""]]
+  HasSubnetId3: !Not [!Equals [!Ref SubnetId3, ""]]
+
+Outputs:
+  MonitorForExpiredRAMInvitesFunctionArn:
+    Description: 'ARN of the Lambda function'
+    Value: !GetAtt MonitorForExpiredRAMInvitesFunction.Arn
