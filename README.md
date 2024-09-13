@@ -1,4 +1,4 @@
-# lf-monitor-for-expired-ram-invites
+# Monitor AWS Resource Access Manager For Expired AWS Lake Formation Invites
 
 ## Purpose
 
