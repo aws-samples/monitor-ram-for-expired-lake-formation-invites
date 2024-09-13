@@ -8,7 +8,7 @@ This utility will monitor for nearing RAM invites for expiration and will recrea
 
 The solution provides an AWS Cloud Formation template that creates an AWS Lambda function, related IAM roles for the Lambda, and EventBridge Rule that is scheduled for every 15 mins. When the Lambda gets kicked off, it will look for ASSOCIATING RAM shares and determines whether it should recreate the RAM invitation. This is done by disassociating the principal with the RAM share and reassociating the principal.
 
-![Solution Diagram](lf-expired-ram-monitor-diagrams.png)
+![Solution Diagram](resources/lf-expired-ram-monitor-diagrams.png)
 
 ## Prerequisites
 
@@ -91,7 +91,7 @@ TOTAL                                                 110     30    73%
 ## Limitations/Things to consider
 
 1. There is an edge case in which if after disassociating a principal from a RAM share succedes, but re-associating the principal fails, and writes to the DDB table fails, the RAM invitation will be stuck in a bad state. In this case, the Lambda should error and manual action will need to be taken.
-2. Moto does not support principal associations yet, so unittests were not completed yet.
+2. Moto does not support principal associations with AWS Resource Manager yet, so unittests are not complete yet.
 
 ### Future roadmap
 
