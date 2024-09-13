@@ -1,4 +1,7 @@
 """
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: MIT-0
+
 This module is called by the AWS Lambda service. 
 This code will look through all RAM invitations that exist in this account and will 
 identify which invitations have expired. If it finds an expired invitation, it will 

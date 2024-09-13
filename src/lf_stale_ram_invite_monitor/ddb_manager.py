@@ -1,4 +1,7 @@
 """
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: MIT-0
+
 This module contains functions and classes that help with interacting with DynamoDB. DynamoDB
 is used to store and retrieve permissions for expired RAM shares. It hopes a snapshot before
 we start revoking permissions so that those permissions can be regranted in the event of an error
