@@ -179,6 +179,14 @@ Resources:
                   - 'ram:DisassociateResourceShare'
                 Resource: !Sub "arn:aws:ram:${AWS::Region}:${AWS::AccountId}:resource-share/*"
                 Sid: 'RAMPermissions'
+              - Effect: 'Allow'
+                Action:
+                  - 'glue:PutResourcePolicy'
+                  - 'glue:DeleteResourcePolicy'
+                Resource: 
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/*"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/*/*"
 
   LambdaSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
